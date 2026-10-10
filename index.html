@@ -1,0 +1,568 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Script">
+<meta name="theme-color" content="#13110f">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-180.png">
+<link rel="manifest" href="manifest.webmanifest">
+<title>Script Follower</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=Barlow+Condensed:wght@500;600&display=swap">
+<style>
+/* Layout: pevná lišta nahoře, scrollující stránky, palcová lišta + aktuální replika dole. */
+:root{
+  color-scheme: dark;
+  --bg:#13110f; --panel:#1d1a17; --line:#322c26;
+  --fg:#efe8df; --dim:#9b9088;
+  --tungsten:#e8a33d; --daylight:#7fb2d6;
+  --ok:#86b06a; --bad:#cf6a5a;
+  --mono:"Courier Prime","Courier New",ui-monospace,monospace;
+  --cond:"Barlow Condensed","Helvetica Neue",Arial,sans-serif;
+  --top:env(safe-area-inset-top,0px);
+  --bot:env(safe-area-inset-bottom,0px);
+}
+*{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+html,body{height:100%; margin:0; overscroll-behavior:none}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:var(--cond); font-size:16px;
+  display:flex; flex-direction:column;
+  -webkit-text-size-adjust:100%;
+}
+
+/* ---- horní lišta ---- */
+#bar{
+  flex:none; background:var(--panel); border-bottom:1px solid var(--line);
+  padding:calc(8px + var(--top)) 12px 8px;
+  display:flex; align-items:center; gap:10px;
+}
+#bar .name{font-size:17px; font-weight:600; letter-spacing:.06em; text-transform:uppercase}
+#bar .name small{display:block; font-family:var(--mono); font-size:10px; color:var(--dim); letter-spacing:0; text-transform:none; font-weight:400}
+#stat{margin-left:auto; font-family:var(--mono); font-size:11px; color:var(--dim); text-align:right; max-width:48%}
+.lamp{display:inline-block; width:8px; height:8px; border-radius:50%; background:#4a423a; margin-right:5px}
+.lamp.live{background:var(--tungsten); box-shadow:0 0 9px var(--tungsten)}
+.lamp.err{background:var(--bad)}
+
+button{
+  font-family:var(--cond); font-size:15px; font-weight:500;
+  letter-spacing:.04em; text-transform:uppercase;
+  background:#2a2521; color:var(--fg);
+  border:1px solid var(--line); border-radius:4px;
+  padding:9px 12px; min-height:44px; cursor:pointer;
+}
+button:active{background:#38312a}
+button:focus-visible{outline:2px solid var(--tungsten); outline-offset:2px}
+.icon{min-width:44px; padding:9px 10px; font-size:17px}
+input[type=file]{display:none}
+
+/* ---- stránky ---- */
+#doc{flex:1; overflow:auto; -webkit-overflow-scrolling:touch; padding:14px 0 10px}
+#stack{display:flex; flex-direction:column; align-items:center; gap:14px}
+.page{position:relative; background:#fff; box-shadow:0 2px 14px rgba(0,0,0,.6)}
+.page canvas{position:absolute; inset:0; width:100%; height:100%; display:block}
+.page .layer{position:absolute; inset:0}
+.ti{position:absolute; border-radius:2px; transition:background-color .12s linear}
+.ti.past{background:rgba(232,163,61,.14)}
+.ti.live{background:rgba(232,163,61,.5); box-shadow:0 0 0 2px rgba(232,163,61,.5)}
+.ph{display:flex; align-items:center; justify-content:center; font-family:var(--mono); font-size:11px; color:#999}
+
+#intro{margin:auto; max-width:40ch; padding:28px 22px; text-align:center; color:var(--dim); font-family:var(--mono); font-size:13px; line-height:1.75}
+#intro b{display:block; margin-bottom:10px; color:var(--fg); font-family:var(--cond); font-size:19px; letter-spacing:.05em; text-transform:uppercase}
+
+/* ---- dolní lišta ---- */
+#foot{flex:none; background:var(--panel); border-top:1px solid var(--line); padding-bottom:var(--bot)}
+#line{
+  padding:10px 14px 8px; font-family:var(--mono); font-size:15px; line-height:1.45;
+  border-bottom:1px solid var(--line); min-height:62px;
+}
+#line .now{color:var(--tungsten)}
+#line .next{color:var(--dim); font-size:13px}
+#keys{display:flex; gap:8px; padding:8px 12px; align-items:center}
+#listen{flex:1; font-size:17px; font-weight:600}
+#listen[data-on="1"]{background:var(--tungsten); color:#17130d; border-color:var(--tungsten)}
+
+/* ---- panel ---- */
+#sheet{
+  position:fixed; inset:0; z-index:40; background:rgba(10,9,8,.72);
+  display:none; align-items:flex-end;
+}
+#sheet.open{display:flex}
+#sheetin{
+  width:100%; max-height:86%; overflow:auto;
+  background:var(--panel); border-top:1px solid var(--line);
+  border-radius:14px 14px 0 0;
+  padding:16px 16px calc(20px + var(--bot));
+  display:flex; flex-direction:column; gap:14px;
+}
+#sheetin h2{margin:0; font-size:18px; letter-spacing:.05em; text-transform:uppercase; font-weight:600}
+#sheetin h3{margin:0; font-size:14px; letter-spacing:.06em; text-transform:uppercase; color:var(--tungsten); font-weight:600}
+#sheetin p, #sheetin li{font-family:var(--mono); font-size:13px; line-height:1.7; color:var(--dim); margin:0}
+#sheetin ol{margin:0; padding-left:1.3em; display:flex; flex-direction:column; gap:7px}
+#sheetin a{color:var(--daylight)}
+#sheetin b{color:var(--fg); font-weight:400}
+.sec{display:flex; flex-direction:column; gap:9px; padding-bottom:14px; border-bottom:1px solid var(--line)}
+.row{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+.row label{font-size:14px; letter-spacing:.04em; text-transform:uppercase; color:var(--dim)}
+input[type=range]{accent-color:var(--tungsten); flex:1; min-width:120px}
+input[type=checkbox]{accent-color:var(--tungsten); width:20px; height:20px}
+select, #sim{
+  font-family:var(--mono); font-size:14px; background:#17140f; color:var(--fg);
+  border:1px solid var(--line); border-radius:4px; padding:9px 10px; min-height:44px;
+}
+#sim{flex:1; min-width:0}
+#meter{flex:1; height:12px; border:1px solid var(--line); border-radius:3px; background:#17140f; overflow:hidden}
+#meter i{display:block; height:100%; width:0; background:var(--ok); transition:width .06s linear}
+#log{
+  font-family:var(--mono); font-size:11px; line-height:1.65; color:var(--dim);
+  background:#17140f; border:1px solid var(--line); border-radius:4px;
+  padding:8px 10px; max-height:150px; overflow:auto;
+}
+#log b{color:var(--bad); font-weight:400}
+#log u{color:var(--ok); text-decoration:none}
+</style>
+</head>
+<body>
+
+<div id="bar">
+  <div class="name">Script<small>follower</small></div>
+  <button class="icon" id="pick" title="Načíst PDF">📄</button>
+  <input type="file" id="file" accept="application/pdf">
+  <button class="icon" id="zout" title="Zmenšit">−</button>
+  <button class="icon" id="zin" title="Zvětšit">+</button>
+  <button class="icon" id="gear" title="Nastavení">⚙</button>
+  <div id="stat"><span class="lamp"></span>bez scénáře</div>
+</div>
+
+<div id="doc">
+  <div id="intro">
+    <b>Načti scénář</b>
+    Klepni na 📄 a vyber PDF. Aplikace z něj vytáhne text i jeho pozici,
+    poslouchá mikrofon a značí, kde se zrovna hraje.<br><br>
+    Klepnutím do textu nastavíš pozici ručně.
+  </div>
+  <div id="stack"></div>
+</div>
+
+<div id="foot">
+  <div id="line"><div class="now">—</div><div class="next"></div></div>
+  <div id="keys">
+    <button class="icon" id="back">◀</button>
+    <button id="listen" data-on="0">▶ Poslouchat</button>
+    <button class="icon" id="fwd">▶</button>
+  </div>
+</div>
+
+<div id="sheet">
+  <div id="sheetin">
+    <div class="row"><h2>Nastavení</h2><button class="icon" id="close" style="margin-left:auto">✕</button></div>
+
+    <div class="sec">
+      <div class="row">
+        <label for="lang">jazyk</label>
+        <select id="lang">
+          <option value="cs-CZ" selected>čeština</option>
+          <option value="sk-SK">slovenština</option>
+          <option value="en-US">english</option>
+          <option value="de-DE">deutsch</option>
+        </select>
+      </div>
+      <div class="row"><label for="sens">citlivost</label><input type="range" id="sens" min="2" max="6" step="1" value="3"></div>
+      <div class="row"><input type="checkbox" id="follow" checked><label for="follow">posouvat stránku</label></div>
+      <div class="row"><input type="checkbox" id="awake" checked><label for="awake">nechat displej svítit</label></div>
+    </div>
+
+    <div class="sec">
+      <h3>Mikrofon</h3>
+      <div class="row"><button id="allow">Povolit mikrofon</button><div id="meter"><i></i></div></div>
+      <p id="mictip">Klepnutím vyvoláš systémový dotaz. Pokud se neobjeví, Safari ho má
+      pro tuhle stránku uložený jako zamítnutý — postup níž.</p>
+      <ol>
+        <li>V Safari klepni na <b>ᴀA</b> vlevo v adresním řádku → <b>Nastavení webu</b> → <b>Mikrofon</b> → <b>Povolit</b>.</li>
+        <li>Pak <b>Nastavení → Aplikace → Safari → Mikrofon</b> a nastav <b>Zeptat se</b> nebo <b>Povolit</b>.</li>
+        <li>Nakonec <b>Nastavení → Soukromí a zabezpečení → Mikrofon</b> a zkontroluj, že Safari má přepínač zapnutý.</li>
+      </ol>
+      <p>iOS neumožňuje skočit do Nastavení z webové stránky, takže poslední dva kroky
+      je potřeba proklikat ručně. Postup od Applu:
+      <a href="https://support.apple.com/guide/iphone/customize-your-safari-settings-iphb3100d149/ios" target="_blank" rel="noopener">Úprava nastavení Safari na iPhonu</a>.</p>
+    </div>
+
+    <div class="sec">
+      <h3>Test bez mikrofonu</h3>
+      <div class="row"><input id="sim" placeholder="napiš repliku a Enter"></div>
+    </div>
+
+    <div>
+      <h3>Log</h3>
+      <div id="log"></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+const IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+            (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const $ = id => document.getElementById(id);
+
+const S = {
+  pdf: null, pages: [], tokens: [], items: [],
+  cursor: 0, heard: [], zoom: 1, baseW: 0,
+  rec: null, listening: false, warmed: false, lastErr: "",
+  stream: null, lock: null, lastScroll: 0
+};
+
+/* ---------- log ---------- */
+function log(msg, kind) {
+  const t = new Date().toLocaleTimeString("cs-CZ");
+  const g = kind === "err" ? "b" : kind === "ok" ? "u" : "span";
+  $("log").insertAdjacentHTML("afterbegin", `<div>${t} <${g}>${msg}</${g}></div>`);
+}
+function setStat(txt, cls) { $("stat").innerHTML = `<span class="lamp ${cls || ""}"></span>${txt}`; }
+
+/* prostředí – ať je hned jasné, co chybí */
+(function preflight() {
+  log(IOS ? "iOS / Safari" : navigator.userAgent.slice(0, 40));
+  const secure = window.isSecureContext;
+  log(`adresa: ${location.protocol}//${location.host || "lokální soubor"}`, secure ? "ok" : "err");
+  if (!secure) log("bez HTTPS iOS mikrofon nepustí – stránku je nutné mít na https:// adrese", "err");
+  if (!(window.SpeechRecognition || window.webkitSpeechRecognition))
+    log("tenhle prohlížeč neumí rozpoznávání řeči", "err");
+})();
+
+/* ---------- panel ---------- */
+$("gear").onclick  = () => $("sheet").classList.add("open");
+$("close").onclick = () => $("sheet").classList.remove("open");
+$("sheet").onclick = e => { if (e.target === $("sheet")) $("sheet").classList.remove("open"); };
+
+/* ---------- text ---------- */
+const norm = s => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+  .replace(/[^a-z0-9]+/g, " ").trim();
+const words = s => { const n = norm(s); return n ? n.split(" ") : []; };
+
+/* ---------- načtení PDF ---------- */
+$("pick").onclick = () => $("file").click();
+
+$("file").addEventListener("change", async e => {
+  const f = e.target.files[0]; if (!f) return;
+  const intro = $("intro"); if (intro) intro.remove();
+  setStat("načítám…", "");
+
+  const pdf = await pdfjsLib.getDocument({ data: await f.arrayBuffer() }).promise;
+  S.pdf = pdf;
+  $("stack").innerHTML = "";
+  S.pages = []; S.tokens = []; S.items = []; S.cursor = 0;
+
+  const first = await pdf.getPage(1);
+  const v1 = first.getViewport({ scale: 1 });
+  S.baseW = Math.min($("doc").clientWidth - 16, 820);
+
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const vp = page.getViewport({ scale: 1 });
+
+    const wrap = document.createElement("div");
+    wrap.className = "page ph";
+    wrap.style.aspectRatio = `${vp.width} / ${vp.height}`;
+    wrap.textContent = "…";
+    const layer = document.createElement("div");
+    layer.className = "layer";
+    wrap.append(layer);
+    $("stack").append(wrap);
+
+    /* text a jeho pozice ukládáme v procentech – zoom je pak jen změna šířky */
+    const tc = await page.getTextContent();
+    for (const it of tc.items) {
+      const ws = words(it.str); if (!ws.length) continue;
+      const tx = pdfjsLib.Util.transform(vp.transform, it.transform);
+      const h = Math.hypot(tx[2], tx[3]) || 10;
+      const el = document.createElement("span");
+      el.className = "ti";
+      el.style.left   = (tx[4] / vp.width  * 100) + "%";
+      el.style.top    = ((tx[5] - h) / vp.height * 100) + "%";
+      el.style.width  = (Math.max(3, it.width) / vp.width * 100) + "%";
+      el.style.height = (h * 1.2 / vp.height * 100) + "%";
+      layer.append(el);
+
+      const idx = S.items.length;
+      for (const w of ws) S.tokens.push({ w, item: idx });
+      S.items.push({ el, page: p, text: it.str.trim(), last: S.tokens.length - 1 });
+      el.addEventListener("click", () => setCursor(S.items[idx].last));
+    }
+
+    S.pages.push({ num: p, wrap, vp, drawn: false, busy: false });
+    if (p % 10 === 0) setStat(`${p}/${pdf.numPages}`, "");
+  }
+
+  applyZoom();
+  observe();
+  setStat(`${pdf.numPages} str. · ${S.tokens.length} slov`, "");
+  log(`načteno: ${pdf.numPages} stran, ${S.tokens.length} slov`, "ok");
+  setCursor(0);
+});
+
+/* ---------- zoom + líné vykreslování (iPhone neunese 100 pláten) ---------- */
+function applyZoom() {
+  const w = Math.round(S.baseW * S.zoom);
+  for (const pg of S.pages) {
+    pg.wrap.style.width = w + "px";
+    if (pg.drawn) { pg.drawn = false; pg.wrap.querySelector("canvas")?.remove(); pg.wrap.classList.add("ph"); }
+  }
+  draw();
+}
+$("zin").onclick  = () => { S.zoom = Math.min(3, S.zoom * 1.25); applyZoom(); };
+$("zout").onclick = () => { S.zoom = Math.max(0.6, S.zoom / 1.25); applyZoom(); };
+
+let io;
+function observe() {
+  io?.disconnect();
+  io = new IntersectionObserver(draw, { root: $("doc"), rootMargin: "150% 0px" });
+  S.pages.forEach(p => io.observe(p.wrap));
+}
+
+async function draw() {
+  const root = $("doc").getBoundingClientRect();
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  for (const pg of S.pages) {
+    const r = pg.wrap.getBoundingClientRect();
+    const near = r.bottom > root.top - root.height * 1.5 && r.top < root.bottom + root.height * 1.5;
+
+    if (near && !pg.drawn && !pg.busy) {
+      pg.busy = true;
+      const page = await S.pdf.getPage(pg.num);
+      const w = pg.wrap.clientWidth;
+      const vp = page.getViewport({ scale: w / pg.vp.width * dpr });
+      const cv = document.createElement("canvas");
+      cv.width = vp.width; cv.height = vp.height;
+      await page.render({ canvasContext: cv.getContext("2d"), viewport: vp }).promise;
+      pg.wrap.classList.remove("ph");
+      [...pg.wrap.childNodes].forEach(n => { if (n.nodeType === 3) n.remove(); });
+      pg.wrap.prepend(cv);
+      pg.drawn = true; pg.busy = false;
+    } else if (!near && pg.drawn) {
+      pg.wrap.querySelector("canvas")?.remove();   // uvolnit paměť
+      pg.wrap.classList.add("ph");
+      pg.drawn = false;
+    }
+  }
+}
+$("doc").addEventListener("scroll", () => { clearTimeout(S.st); S.st = setTimeout(draw, 120); }, { passive: true });
+
+/* ---------- pozice ---------- */
+let painted = [];
+function setCursor(i) {
+  if (!S.tokens.length) return;
+  S.cursor = Math.max(0, Math.min(S.tokens.length - 1, i));
+  const cur = S.tokens[S.cursor]; if (!cur) return;
+
+  painted.forEach(x => x.classList.remove("live", "past"));
+  painted = [];
+  for (let k = cur.item - 3; k <= cur.item; k++) {
+    const it = S.items[k]; if (!it) continue;
+    it.el.classList.add(k === cur.item ? "live" : "past");
+    painted.push(it.el);
+  }
+
+  const it = S.items[cur.item];
+  $("line").children[0].textContent = it.text || "—";
+  $("line").children[1].textContent = (S.items[cur.item + 1]?.text || "");
+
+  if ($("follow").checked && Date.now() - S.lastScroll > 500) {
+    S.lastScroll = Date.now();
+    it.el.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+}
+$("back").onclick = () => step(-1);
+$("fwd").onclick  = () => step(1);
+function step(d) {
+  const cur = S.tokens[S.cursor]; if (!cur) return;
+  const t = S.items[cur.item + d];
+  if (t) setCursor(t.last);
+}
+
+/* ---------- zarovnání slyšeného se scénářem ---------- */
+function align(q) {
+  q = q.slice(-10).filter(w => w.length > 1);
+  if (q.length < 2 || !S.tokens.length) return null;
+  const from = Math.max(0, S.cursor - 50);
+  const to   = Math.min(S.tokens.length, S.cursor + 450);
+  let best = { hits: 0, end: -1, score: -1e9 };
+  for (let p = from; p < to; p++) {
+    let ti = p, hits = 0, last = p;
+    for (let i = 0; i < q.length; i++) {
+      const stop = Math.min(ti + 4, to);
+      for (let j = ti; j < stop; j++) {
+        if (S.tokens[j].w === q[i]) { hits++; ti = j + 1; last = j; break; }
+      }
+    }
+    const d = p - S.cursor;
+    const score = hits - (d < 0 ? -d * 0.02 : d * 0.004);
+    if (score > best.score) best = { hits, end: last, score };
+  }
+  return best;
+}
+function feed(ws, keep) {
+  const buf = keep ? S.heard.concat(ws).slice(-14) : (S.heard = S.heard.concat(ws).slice(-14));
+  const m = align(buf);
+  if (!m) return;
+  if (m.hits >= +$("sens").value + (keep ? 1 : 0) && m.end > -1) setCursor(m.end);
+}
+
+/* ---------- mikrofon ---------- */
+const ERRS = {
+  "not-allowed": "mikrofon zamítnut – viz ⚙ Mikrofon",
+  "service-not-allowed": "iOS rozpoznávání nepustil – zkontroluj Diktování v Nastavení",
+  "no-speech": "ticho",
+  "audio-capture": "žádný vstup z mikrofonu",
+  "network": "rozpoznávání potřebuje internet",
+  "aborted": "přerušeno",
+  "language-not-supported": "tenhle jazyk Safari neumí"
+};
+
+$("allow").onclick = async () => {
+  try {
+    const st = await navigator.mediaDevices.getUserMedia({ audio: true });
+    log("mikrofon povolen: " + (st.getAudioTracks()[0].label || "bez názvu"), "ok");
+    $("mictip").textContent = "Mikrofon je povolený. Proužek ukazuje hlasitost.";
+    meter(st);
+  } catch (err) {
+    log("getUserMedia: " + err.name + " – " + (err.message || ""), "err");
+    $("mictip").textContent = "Systém odpověděl: " + err.name + ". Projdi kroky níž.";
+  }
+};
+
+function meter(st) {
+  S.stream = st;
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const an = ctx.createAnalyser(); an.fftSize = 512;
+  ctx.createMediaStreamSource(st).connect(an);
+  const buf = new Uint8Array(an.fftSize), bar = document.querySelector("#meter i");
+  const t0 = Date.now();
+  (function tick() {
+    if (Date.now() - t0 > 20000) {           // po 20 s pustíme mikrofon, ať nebrání rozpoznávání
+      st.getTracks().forEach(t => t.stop()); ctx.close(); S.stream = null;
+      bar.style.width = "0"; return;
+    }
+    an.getByteTimeDomainData(buf);
+    let peak = 0; for (const v of buf) peak = Math.max(peak, Math.abs(v - 128));
+    bar.style.width = Math.min(100, peak * 1.6) + "%";
+    requestAnimationFrame(tick);
+  })();
+}
+
+function getRec() {
+  if (S.rec) { S.rec.lang = $("lang").value; return S.rec; }   // Safari pípá při každé nové instanci
+  const R = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!R) return null;
+  const rec = new R();
+  rec.lang = $("lang").value;
+  rec.continuous = !IOS;        // iOS continuous nezvládá, restartujeme po každé větě
+  rec.interimResults = true;
+  rec.maxAlternatives = 1;
+
+  rec.onstart = () => { S.started = Date.now(); setStat("poslouchám", "live"); };
+  rec.onspeechstart = () => log("slyším řeč");
+  rec.onresult = e => {
+    let interim = "";
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (r.isFinal) feed(words(r[0].transcript), false);
+      else interim += r[0].transcript + " ";
+    }
+    if (interim.trim()) feed(words(interim), true);
+  };
+  rec.onerror = ev => {
+    S.lastErr = ev.error;
+    if (ev.error === "no-speech" || ev.error === "aborted") return;
+    log("chyba: " + ev.error + " – " + (ERRS[ev.error] || ""), "err");
+    if (ev.error === "not-allowed" || ev.error === "service-not-allowed") {
+      setStat(ERRS[ev.error], "err");
+      stop(true);
+      $("sheet").classList.add("open");
+    }
+  };
+  rec.onend = () => {
+    if (!S.listening) return;
+    const fast = Date.now() - (S.started || 0) < 400;
+    S.quick = fast ? (S.quick || 0) + 1 : 0;
+    if (S.quick >= 4) {
+      log("relace padá okamžitě (" + (S.lastErr || "bez chyby") + ") – zastavuji", "err");
+      setStat("rozpoznávání se nespustí", "err");
+      stop(true); $("sheet").classList.add("open"); return;
+    }
+    setTimeout(() => {
+      if (!S.listening) return;
+      try { rec.start(); } catch (e) { log("restart: " + e.message, "err"); }
+    }, 200);
+  };
+  S.rec = rec;
+  return rec;
+}
+
+$("listen").onclick = () => S.listening ? stop(false) : start();
+
+function start() {
+  if (!window.isSecureContext) {
+    setStat("potřeba https", "err");
+    log("stránka neběží přes HTTPS – iOS mikrofon nepovolí", "err");
+    $("sheet").classList.add("open");
+    return;
+  }
+  const rec = getRec();
+  if (!rec) { setStat("bez rozpoznávání řeči", "err"); $("sheet").classList.add("open"); return; }
+
+  /* Safari chce první start přímo v gestu – žádné await před start() */
+  S.listening = true; S.quick = 0;
+  try { rec.start(); }
+  catch (e) {
+    try { rec.abort(); rec.start(); }
+    catch (e2) { S.listening = false; log("start() " + e2.name + ": " + e2.message, "err"); setStat("nelze spustit", "err"); return; }
+  }
+  $("listen").dataset.on = "1"; $("listen").textContent = "■ Stop";
+  wake(true);
+}
+
+function stop(byErr) {
+  S.listening = false;
+  if (S.rec) { try { S.rec.abort(); } catch (e) {} }
+  $("listen").dataset.on = "0"; $("listen").textContent = "▶ Poslouchat";
+  if (!byErr) setStat("zastaveno", "");
+  wake(false);
+  log(byErr ? "zastaveno kvůli chybě" : "zastaveno ručně");
+}
+
+/* ---------- displej a přepnutí do pozadí ---------- */
+async function wake(on) {
+  try {
+    if (on && $("awake").checked && "wakeLock" in navigator) {
+      S.lock = await navigator.wakeLock.request("screen");
+    } else if (!on && S.lock) { S.lock.release(); S.lock = null; }
+  } catch (e) { /* Safari to někdy odmítne, nevadí */ }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    if (S.listening && S.rec) { try { S.rec.abort(); } catch (e) {} log("na pozadí Safari rozpoznávání ukončí"); }
+  } else {
+    if (S.listening && S.rec) { try { S.rec.start(); } catch (e) {} }
+    wake(true);
+  }
+});
+
+/* ---------- test bez mikrofonu ---------- */
+$("sim").addEventListener("keydown", e => {
+  if (e.key !== "Enter") return;
+  feed(words(e.target.value), false);
+  e.target.value = "";
+  $("sheet").classList.remove("open");
+});
+</script>
+</body>
+</html>
