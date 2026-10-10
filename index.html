@@ -177,6 +177,14 @@ select, #sim{
           <option value="de-DE">deutsch</option>
         </select>
       </div>
+      <div class="row">
+        <label for="mode">režim</label>
+        <select id="mode">
+          <option value="auto" selected>automatický restart</option>
+          <option value="cont">souvislý</option>
+          <option value="ptt">podrž a mluv</option>
+        </select>
+      </div>
       <div class="row"><label for="sens">citlivost</label><input type="range" id="sens" min="2" max="6" step="1" value="3"></div>
       <div class="row"><input type="checkbox" id="follow" checked><label for="follow">posouvat stránku</label></div>
       <div class="row"><input type="checkbox" id="awake" checked><label for="awake">nechat displej svítit</label></div>
@@ -486,17 +494,21 @@ function meter(st) {
   })();
 }
 
-function getRec() {
-  if (S.rec) { S.rec.lang = $("lang").value; return S.rec; }   // Safari pípá při každé nové instanci
+function badge() {
+  setStat(`poslouchám · ${S.nres || 0}v · ${S.restarts || 0}r`, "live");
+}
+
+/* Pokaždé nová instance: iOS po ukončení relace tu starou už neoživí. */
+function newRec() {
   const R = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!R) return null;
   const rec = new R();
   rec.lang = $("lang").value;
-  rec.continuous = !IOS;        // iOS continuous nezvládá, restartujeme po každé větě
+  rec.continuous = $("mode").value === "cont";
   rec.interimResults = true;
   rec.maxAlternatives = 1;
 
-  rec.onstart = () => { S.started = Date.now(); setStat(`poslouchám · ${S.nres || 0}`, "live"); };
+  rec.onstart = () => { S.started = Date.now(); badge(); };
   rec.onspeechstart = () => log("slyším řeč");
   rec.onresult = e => {
     let interim = "";
@@ -504,7 +516,7 @@ function getRec() {
       const r = e.results[i];
       if (r.isFinal) {
         S.nres = (S.nres || 0) + 1;
-        setStat(`poslouchám · ${S.nres}`, "live");
+        badge();
         log("» " + r[0].transcript);
         feed(words(r[0].transcript), false);
       } else interim += r[0].transcript + " ";
@@ -522,24 +534,39 @@ function getRec() {
     }
   };
   rec.onend = () => {
-    if (!S.listening) return;
+    if (!S.listening || S.ptt) return;
     const fast = Date.now() - (S.started || 0) < 400;
     S.quick = fast ? (S.quick || 0) + 1 : 0;
-    if (S.quick >= 4) {
+    if (S.quick >= 6) {
       log("relace padá okamžitě (" + (S.lastErr || "bez chyby") + ") – zastavuji", "err");
       setStat("rozpoznávání se nespustí", "err");
       stop(true); $("sheet").classList.add("open"); return;
     }
-    setTimeout(() => {
-      if (!S.listening) return;
-      try { rec.start(); } catch (e) { log("restart: " + e.message, "err"); }
-    }, 200);
+    S.restarts = (S.restarts || 0) + 1;
+    badge();
+    setTimeout(cycle, 350);
   };
-  S.rec = rec;
   return rec;
 }
 
-$("listen").onclick = () => S.listening ? stop(false) : start();
+/* spustí vždy čerstvou relaci */
+function cycle() {
+  if (!S.listening) return;
+  try { S.rec = newRec(); S.rec.start(); }
+  catch (e) { log("start: " + e.name + " " + e.message, "err"); }
+}
+
+$("listen").onclick = () => { if ($("mode").value !== "ptt") S.listening ? stop(false) : start(); };
+
+/* Push-to-talk: drž tlačítko po dobu repliky */
+["pointerdown", "pointerup", "pointercancel", "pointerleave"].forEach(ev =>
+  $("listen").addEventListener(ev, e => {
+    if ($("mode").value !== "ptt") return;
+    e.preventDefault();
+    if (ev === "pointerdown") { S.ptt = true; start(); }
+    else if (S.listening) { S.ptt = false; stop(false); }
+  })
+);
 
 function start() {
   if (!window.isSecureContext) {
@@ -548,24 +575,22 @@ function start() {
     $("sheet").classList.add("open");
     return;
   }
-  const rec = getRec();
-  if (!rec) { setStat("bez rozpoznávání řeči", "err"); $("sheet").classList.add("open"); return; }
-
-  /* Safari chce první start přímo v gestu – žádné await před start() */
-  S.listening = true; S.quick = 0;
-  try { rec.start(); }
-  catch (e) {
-    try { rec.abort(); rec.start(); }
-    catch (e2) { S.listening = false; log("start() " + e2.name + ": " + e2.message, "err"); setStat("nelze spustit", "err"); return; }
+  if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) {
+    setStat("bez rozpoznávání řeči", "err"); $("sheet").classList.add("open"); return;
   }
-  $("listen").dataset.on = "1"; $("listen").textContent = "■ Stop";
+  /* Safari chce první start přímo v gestu – nic asynchronního před start() */
+  S.listening = true; S.quick = 0; S.restarts = 0; S.nres = 0;
+  cycle();
+  $("listen").dataset.on = "1";
+  $("listen").textContent = $("mode").value === "ptt" ? "● Mluv" : "■ Stop";
   wake(true);
 }
 
 function stop(byErr) {
-  S.listening = false;
-  if (S.rec) { try { S.rec.abort(); } catch (e) {} }
-  $("listen").dataset.on = "0"; $("listen").textContent = "▶ Poslouchat";
+  S.listening = false; S.ptt = false;
+  if (S.rec) { try { S.rec.abort(); } catch (e) {} S.rec = null; }
+  $("listen").dataset.on = "0";
+  $("listen").textContent = $("mode").value === "ptt" ? "⬤ Podrž a mluv" : "▶ Poslouchat";
   if (!byErr) setStat("zastaveno", "");
   wake(false);
   log(byErr ? "zastaveno kvůli chybě" : "zastaveno ručně");
@@ -586,6 +611,12 @@ document.addEventListener("visibilitychange", () => {
     if (S.listening && S.rec) { try { S.rec.start(); } catch (e) {} }
     wake(true);
   }
+});
+
+$("mode").addEventListener("change", () => {
+  if (S.listening) stop(false);
+  $("listen").textContent = $("mode").value === "ptt" ? "⬤ Podrž a mluv" : "▶ Poslouchat";
+  log("režim: " + $("mode").selectedOptions[0].textContent);
 });
 
 /* ---------- test bez mikrofonu ---------- */
